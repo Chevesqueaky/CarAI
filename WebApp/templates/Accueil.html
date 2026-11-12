@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+    <h1>Bonjour !</h1>
+    <div class="content">
+        <p> Voilà le site pour voir toutes les données d'entrainement de l'ia voiture !</p>    
+        <a href="{{url_for('main.graphique')}}" class="btn">Graphique</a>
+        <a href="{{url_for('main.simulation')}}" class="btn">simulation</a>
+
+        <img src="{{ url_for('static', filename='img/image.png') }}" class="img" alt="Image">
+
+    </div>
+    
+{% endblock %}

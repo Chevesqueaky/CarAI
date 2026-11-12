@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+    <h1>Choisisez les réseaux neuronaux</h1>
+    <div class="content">
+        <form method="post" action="{{url_for('main.simulations')}}">
+            <input type="hidden" value="{{Map}}" id="Map" name="Map">
+            <input type="hidden" value="{{nb}}" id="nb" name="nb">
+            {% for i in range(nb) %}
+                <h2>Réseau {{ i+1 }}</h2>
+                <input type="number" min="0" max="1000" placeholder="génération du réseaux(1-1000)" id="gen_{{i}}" name="gen_{{i}}" required class="number">
+                <input type="number" min="1" max="10" placeholder="Place du réseaux(1-10)" id="place_{{i}}" name="place_{{i}}" required class="number">
+                <select id="Fichier_{{ i }}" name="Fichier_{{ i }}" required class="number">
+                    <option value="" disabled selected>Choisit le fichier du réseaux</option>
+                    <option value="0">100% entrainnée sur la Map 1</option>
+                    <option value="2">100% entrainnée sur la Map 2</option>
+                    <option value="1">50% sur la 1 puis 50% sur la 2</option>
+                    <option value="3">50% sur la 2 puis 50% sur la 1</option>
+                </select>
+                <br>
+            {% endfor %}
+            <input type="submit" value="Valider les réseaux" class="btn">
+        </form>
+    </div>
+{% endblock %}

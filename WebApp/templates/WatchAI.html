@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+    <h1>Simulation</h1>
+    <div class="content">
+        <p> Choisisez le(s) réseau(x) nerron(al/aux) que vous voullez simuler !</p>
+        <form action="{{url_for('main.choose_network')}}" method="post">
+            <select id="Map" name="Map" class="number" required class="number">
+                    <option value="" disabled selected>La Map de simulation</option>
+                    <option value="0">Map 1</option>
+                    <option value="1">Map 2</option>
+                    <option value="3">Map 3</option>
+            </select>
+            <input type="number" min="1" max="10" placeholder="Nombre de resaux(1-10)" id="Nb" name="Nb" required class="number">
+            <input type="submit" value="Choisir les resaux" class="btn">
+        </form>
+        <img src="{{ url_for('static', filename='img/Background.png') }}" class="img" alt="Image" id="img">
+    </div>
+    <script>
+        const img = document.getElementById('img');
+        img.style.display = 'none';
+        document.getElementById('Map').addEventListener('change', ()=>{
+            let nb = document.getElementById('Map').value;
+            // mettre l'image en Background(nb-1).png
+            img.style.display = 'block';
+            if (nb === "0") {
+                img.src = "{{ url_for('static', filename='img/Background.png') }}";
+            } else {
+                // On génère dynamiquement le chemin vers Background1.png ou Background3.png
+                img.src = "/static/img/Background" + nb + ".png";
+            }
+        })
+    </script>
+{% endblock %}

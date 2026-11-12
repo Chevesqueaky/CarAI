@@ -1,0 +1,1951 @@
+<!--{ extends "base.html" %}
+{ block content %}
+    <h1>Simulation</h1>
+    <div class="content">
+        <p>Afficher la simulation</p>
+        <div>
+            <input type="button" id="pause">
+            <canvas id="screen">
+
+            </canvas>
+        </div>
+        <script>
+            const pause = document.getElementById('pause');
+            let pause_value = false;
+            const screen = document.getElementById('screen');
+            const map =  {{Map | tojson}};
+            const data = {{Data | tojson}};
+            console.log(map);
+            console.log(data);
+        </script>
+    </div>
+{ endblock %}-->
+{% extends "base.html" %}
+
+{% block content %}
+
+<h1>Simulation IA</h1>
+
+<div class="sim-controls">
+    <button id="btnPause" class="btn">Pause</button>
+    <button id="btnReset" class="btn">Reset</button>
+
+    <label>
+        <input type="checkbox" id="chkSensors">
+        Voir capteurs
+    </label>
+
+    <label>
+        <input type="checkbox" id="chkCheckpoints" checked>
+        Voir checkpoints
+    </label>
+
+    <label>
+        <input type="checkbox" id="chkStopCrash" checked>
+        Arrêter au crash
+    </label>
+
+    <label>
+        Vitesse :
+        <input type="range" id="speedRange" min="0.25" max="4" step="0.25" value="1">
+        <span id="speedValue">1x</span>
+    </label>
+</div>
+
+<canvas id="simCanvas" width="800" height="600"></canvas>
+
+<div id="simInfo" class="sim-info-grid">
+    <div id="simInfo" class="sim-cards"></div>
+</div>
+
+<script>
+    // ========================================================
+// Données envoyées par Flask
+// ========================================================
+// Ton route renvoie DataReturn sous cette forme :
+//
+// Data = [
+//   [nb, car_data],
+//   [nb, car_data],
+//   ...
+// ]
+//
+// Donc ici on récupère car_data avec item[1].
+//
+const RAW_DATA = {{ Data | tojson }};
+const MAP = {{ Map | tojson }};
+const MAP_STR = String(MAP ?? "");
+
+// Images servies par Flask depuis :
+// carAI/pythonApp/img/
+//
+// URL utilisée :
+// /assets/pythonapp/img/Car1.png
+// /assets/pythonapp/img/Checkpoint.png
+// /assets/pythonapp/img/Background.png
+//
+const IMG_BASE = "/assets/pythonapp/img";
+
+// ========================================================
+// Constantes principales
+// ========================================================
+const CANVAS_WIDTH = 800;
+const CANVAS_HEIGHT = 600;
+const STEP_MS = 1000 / 60;
+
+// Couleurs détectées par tes capteurs Python :
+// (181, 230, 29, 255) ou (34, 177, 76, 255)
+const WALL_COLOR_1 = [181, 230, 29];
+const WALL_COLOR_2 = [34, 177, 76];
+
+// Si tes PNG ont des couleurs très légèrement différentes après rendu,
+// passe USE_COLOR_TOLERANCE à true.
+const USE_COLOR_TOLERANCE = false;
+const COLOR_TOLERANCE = 12;
+
+// Dans ton Python Show_AI :
+//
+// if turn > 1:
+//     turn = 1
+// elif turn < -1:
+//     turn = 0
+//
+// Je laisse ce comportement exact par défaut.
+// Si tu penses que c'était une erreur et que tu voulais -1,
+// mets EXACT_PYTHON_TURN_CLAMP à false.
+const EXACT_PYTHON_TURN_CLAMP = true;
+
+// Arrête la voiture si elle sort du canvas.
+const STOP_OUTSIDE = true;
+const SPEED_MAX = 1;
+// ========================================================
+// Checkpoints
+// ========================================================
+// Attention : dans ton Python, tu avais :
+//
+// if Map == 0:
+//
+// mais Map est une string, donc ça ne marchait jamais.
+// Ici on compare correctement avec "0".
+//
+const CHECKPOINT_ORDER_MAP0 = [
+    [66, 350, 0],
+    [66, 300, 0],
+    [66, 250, 0],
+    [65, 200, 20],
+    [56, 156, -10],
+    [110, 130, -80],
+    [140, 126, -90],
+    [170, 138, 215],
+    [190, 169, 17],
+    [189, 215, -5],
+    [183, 266, 0],
+    [192, 317, 20],
+    [240, 360, 70],
+    [285, 363, 90],
+    [330, 363, 90],
+    [390, 335, 130],
+    [409, 300, -25],
+    [387, 242, 45],
+    [335, 207, 50],
+    [288, 155, 0],
+    [325, 125, -62],
+    [370, 115, 90],
+    [420, 115, 90],
+    [470, 115, 90],
+    [520, 115, 90],
+    [570, 115, 90],
+    [620, 110, 90],
+    [660, 120, 62],
+    [678, 150, 10],
+    [660, 192, -60],
+    [611, 210, -60],
+    [575, 236, -23],
+    [572, 278, 25],
+    [624, 320, 65],
+    [677, 338, 65],
+    [713, 380, 0],
+    [710, 410, -30],
+    [690, 445, -50],
+    [625, 470, 95],
+    [568, 425, 35],
+    [535, 400, 90],
+    [509, 412, 138],
+    [490, 435, 145],
+    [475, 465, 155],
+    [465, 515, 135],
+    [410, 525, 90],
+    [330, 500, 40],
+    [290, 500, 135],
+    [255, 513, 95],
+    [210, 526, 90],
+    [160, 526, 90],
+    [80, 523, 45],
+    [66, 450, 0],
+    [66, 400, 0]
+];
+
+const CHECKPOINT_ORDER_OTHER = [
+    [120, 368, 320],
+    [155, 210, 45],
+    [155, 130, 90],
+    [415, 115, 90],
+    [580, 165, 45],
+    [590, 310, 315],
+    [590, 395, 45],
+    [370, 530, 90],
+    [112, 500, 45]
+];
+
+const CHECKPOINT_ORDER = MAP_STR === "0"
+    ? CHECKPOINT_ORDER_MAP0
+    : CHECKPOINT_ORDER_OTHER;
+
+// ========================================================
+// Canvas / DOM
+// ========================================================
+const canvas = document.getElementById("simCanvas");
+const ctx = canvas.getContext("2d");
+
+const simInfo = document.getElementById("simInfo");
+const btnPause = document.getElementById("btnPause");
+const btnReset = document.getElementById("btnReset");
+const chkSensors = document.getElementById("chkSensors");
+const chkCheckpoints = document.getElementById("chkCheckpoints");
+const chkStopCrash = document.getElementById("chkStopCrash");
+const speedRange = document.getElementById("speedRange");
+const speedValue = document.getElementById("speedValue");
+
+// ========================================================
+// État global
+// ========================================================
+let bgImage = null;
+let bgCanvas = null;
+let wallMask = null;
+
+let checkpointImage = null;
+let checkpointW = 32;
+let checkpointH = 32;
+
+let carImages = [];
+
+let cars = [];
+
+let paused = false;
+let showSensors = false;
+let showCheckpoints = true;
+let stopOnCrash = true;
+let speedMultiplier = 1;
+
+let lastTime = performance.now();
+let accumulator = 0;
+let frameCount = 0;
+
+// Références DOM des cartes d'infos, pour ne pas recréer
+// tout le HTML à chaque frame.
+let infoRefs = [];
+
+// ========================================================
+// Utilitaires
+// ========================================================
+function loadImage(src) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = (e) => reject(e);
+        img.src = src;
+    });
+}
+
+function getBackgroundSrcForMap(mapStr) {
+    if (mapStr === "0") {
+        return `${IMG_BASE}/Background.png`;
+    } else if (mapStr === "3") {
+        return `${IMG_BASE}/Background3.png`;
+    } else {
+        return `${IMG_BASE}/Background1.png`;
+    }
+}
+
+function getStartPositionForMap(mapStr) {
+    // Coordonnées exactes de ton classe car Python
+    if (mapStr === "0") {
+        return { x: 95, y: 410 };
+    } else {
+        return { x: 129, y: 390 };
+    }
+}
+
+function isWallColor(r, g, b, a) {
+    // Dans ton Python, tu compares avec alpha 255.
+    // Ici on tolère un peu pour éviter les problèmes de rendu PNG.
+    if (a < 250) return false;
+
+    if (!USE_COLOR_TOLERANCE) {
+        const match1 =
+            r === WALL_COLOR_1[0] &&
+            g === WALL_COLOR_1[1] &&
+            b === WALL_COLOR_1[2];
+
+        const match2 =
+            r === WALL_COLOR_2[0] &&
+            g === WALL_COLOR_2[1] &&
+            b === WALL_COLOR_2[2];
+
+        return match1 || match2;
+    }
+
+    function closeTo(value, target) {
+        return Math.abs(value - target) <= COLOR_TOLERANCE;
+    }
+
+    const match1 =
+        closeTo(r, WALL_COLOR_1[0]) &&
+        closeTo(g, WALL_COLOR_1[1]) &&
+        closeTo(b, WALL_COLOR_1[2]);
+
+    const match2 =
+        closeTo(r, WALL_COLOR_2[0]) &&
+        closeTo(g, WALL_COLOR_2[1]) &&
+        closeTo(b, WALL_COLOR_2[2]);
+
+    return match1 || match2;
+}
+
+function formatValue(value, decimals = 2) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return "—";
+    return num.toFixed(decimals);
+}
+
+// ========================================================
+// Préparation du fond pour les capteurs
+// ========================================================
+function prepareWallMask() {
+    if (!bgImage) {
+        wallMask = null;
+        return;
+    }
+
+    bgCanvas = document.createElement("canvas");
+    bgCanvas.width = CANVAS_WIDTH;
+    bgCanvas.height = CANVAS_HEIGHT;
+
+    const offCtx = bgCanvas.getContext("2d", { willReadFrequently: true });
+
+    // Important : désactive le lissage pour garder les couleurs exactes.
+    offCtx.imageSmoothingEnabled = false;
+
+    offCtx.drawImage(bgImage, 0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+    const imageData = offCtx.getImageData(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    const pixels = imageData.data;
+
+    wallMask = new Uint8Array(CANVAS_WIDTH * CANVAS_HEIGHT);
+
+    for (let i = 0; i < wallMask.length; i++) {
+        const idx = i * 4;
+        const r = pixels[idx];
+        const g = pixels[idx + 1];
+        const b = pixels[idx + 2];
+        const a = pixels[idx + 3];
+
+        wallMask[i] = isWallColor(r, g, b, a) ? 1 : 0;
+    }
+}
+
+// ========================================================
+// Normalisation des données Flask
+// ========================================================
+function getCarDataFromItem(item) {
+    // Ta route Flask envoie :
+    // [nb, car_data]
+    //
+    // Mais on gère aussi le cas où car_data serait envoyé directement.
+    if (Array.isArray(item)) {
+        return item[1] ?? {};
+    }
+    return item ?? {};
+}
+
+function normalizeNetworks(rawData) {
+    if (!Array.isArray(rawData)) return [];
+
+    return rawData.map((item, index) => {
+        const carData = getCarDataFromItem(item);
+
+        return {
+            index: index,
+
+            nerrone: carData?.nerrone ?? [],
+
+            savedNb: carData?.nb ?? index,
+            savedScore: carData?.score ?? 0,
+            savedParents: carData?.parents ?? null,
+            savedTimeGen: carData?.TimeGen ?? null,
+            savedNbCheckpoint: carData?.nbCheckpoint ?? null,
+            savedTempsLastCheck: carData?.tempsLastCheck ?? null,
+
+            // Champs optionnels, utiles si ta route Flask les ajoute
+            savedGen: carData?.gen ?? null,
+            savedFile: carData?.file ?? null,
+            requestedPlace: carData?.requested_place ?? null,
+            usedIndex: carData?.used_index ?? null,
+
+            // Dans ton système Python :
+            // index 10 / nb 10 = meilleur des voitures crachées.
+            isFallback:
+                carData?.is_fallback === true ||
+                Number(carData?.nb) === 10
+        };
+    });
+}
+
+// ========================================================
+// Création des voitures
+// ========================================================
+function createCars(networks) {
+    const start = getStartPositionForMap(MAP_STR);
+
+    return networks.map((net, i) => {
+        // Dans ton Python :
+        //
+        // def __init__(self, nb):
+        //     data_color = nb % 10
+        //     self.car = data_color + 1
+        //
+        // Et start() fait :
+        // for i in range(nb_ai):
+        //     cars.append(car(i + 1))
+        //
+        // Donc :
+        // i = 0 -> nb = 1 -> Car2.png
+        // i = 1 -> nb = 2 -> Car3.png
+        // ...
+        // i = 9 -> nb = 10 -> Car1.png
+        //
+        // Si tu veux que le premier réseau utilise Car1.png,
+        // remplace cette ligne par :
+        // const spriteNumber = (i % 10) + 1;
+        //
+        const simulatedNb = i + 1;
+        const spriteNumber = (simulatedNb % 10) + 1;
+
+        return {
+            ...net,
+
+            // Coordonnées exactes de départ
+            x: start.x,
+            y: start.y,
+
+            direction: 0,
+            CurentSpeed: 0,
+            MaxSpeed: 5,
+            capteurMaxDist: 100,
+
+            data: [1.0, 1.0, 1.0, 1.0, 1.0],
+
+            nbCheckpointPass: 0,
+            checkpoint_nb: 1,
+
+            timeSinceCheckpoint: 0,
+            score: 0,
+
+            crashed: false,
+            stopped: false,
+
+            spriteNumber: spriteNumber,
+            colorIndex: spriteNumber - 1
+        };
+    });
+}
+
+// ========================================================
+// Physique : avancer()
+// ========================================================
+function avancer(car, vitesse) {
+    if (car.CurentSpeed > vitesse) {
+        let vitesseM = car.CurentSpeed - 0.2;
+        if (vitesseM < vitesse) vitesseM = vitesse;
+        car.CurentSpeed = vitesseM;
+    } else if (car.CurentSpeed < vitesse) {
+        let vitesseM = car.CurentSpeed + 0.05;
+        if (vitesseM > vitesse) vitesseM = vitesse;
+        car.CurentSpeed = vitesseM;
+    }
+}
+
+// ========================================================
+// Physique : tourner()
+// ========================================================
+function tourner(car, puissance) {
+    // Traduction directe de ton Python :
+    //
+    // if self.direction + puissance < 270 and self.direction + puissance > -90:
+    //     self.direction += puissance
+    // else:
+    //     if self.direction + puissance > 270:
+    //         self.direction = self.direction + puissance - 360
+    //     else:
+    //         self.direction = self.direction + puissance + 360
+    //
+    const newDirection = car.direction + puissance;
+
+    if (newDirection < 270 && newDirection > -90) {
+        car.direction = newDirection;
+    } else {
+        if (newDirection > 270) {
+            car.direction = newDirection - 360;
+        } else {
+            car.direction = newDirection + 360;
+        }
+    }
+}
+
+// ========================================================
+// Capteurs : traduction de car.capteurs()
+// ========================================================
+function updateSensors(car) {
+    car.data = [];
+
+    if (!wallMask) {
+        // Si le fond n'est pas chargé, on évite de crasher partout.
+        car.data = [1.0, 1.0, 1.0, 1.0, 1.0];
+        return;
+    }
+
+    const t = car.direction * Math.PI / 180;
+    const Lx = -1;
+    const Ly = -8;
+
+    function createCaptor(change, dif) {
+        const originX =
+            car.x +
+            (Lx + dif) * Math.cos(t) -
+            (Ly + 1) * Math.sin(t);
+
+        const originY =
+            car.y +
+            (Lx + dif) * Math.sin(t) +
+            (Ly + 1) * Math.cos(t);
+
+        const stepX = Math.sin((car.direction + change) * Math.PI / 180);
+        const stepY = Math.cos((car.direction + change) * Math.PI / 180);
+
+        for (let i = 0; i < car.capteurMaxDist; i++) {
+            const px = Math.round(originX + i * stepX);
+            const py = Math.round(originY - i * stepY);
+
+            // Équivalent du IndexError Python
+            if (px < 0 || px >= CANVAS_WIDTH || py < 0 || py >= CANVAS_HEIGHT) {
+                car.data.push(0.0);
+                return;
+            }
+
+            const maskIndex = py * CANVAS_WIDTH + px;
+
+            if (wallMask[maskIndex] === 1) {
+                car.data.push(i / car.capteurMaxDist);
+                return;
+            }
+        }
+
+        car.data.push(1.0);
+    }
+
+    createCaptor(-40, -6);
+    createCaptor(-20, -2);
+    createCaptor(0, 0);
+    createCaptor(20, 2);
+    createCaptor(40, 6);
+}
+
+// ========================================================
+// Réseau de neurones : forward pass
+// ========================================================
+function forwardPass(inputs, nerrone) {
+    const output = [
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0]
+    ];
+
+    if (!Array.isArray(nerrone) || nerrone.length < 2) {
+        return { avancer: 0.0, turn: 0.0 };
+    }
+
+    // Couche 0 : inputs -> hidden
+    for (let j = 0; j < 6; j++) {
+        for (let i = 0; i < inputs.length; i++) {
+            const weight = nerrone[0]?.[i]?.[j];
+            if (typeof weight === "number") {
+                output[0][j] += inputs[i] * weight;
+            }
+        }
+    }
+
+    // Couche 1 : hidden -> outputs
+    for (let j = 0; j < 2; j++) {
+        for (let i = 0; i < 6; i++) {
+            const weight = nerrone[1]?.[i]?.[j];
+            if (typeof weight === "number") {
+                output[1][j] += output[0][i] * weight;
+            }
+        }
+    }
+
+    let avancerValue = output[1][1];
+    let turnValue = output[1][0];
+
+    // Clamp avancer : identique à ton Python
+    if (avancerValue > 1) avancerValue = 1;
+    else if (avancerValue < 0) avancerValue = 0;
+
+    // Clamp turn
+    if (EXACT_PYTHON_TURN_CLAMP) {
+        // Exactement comme ton Python actuel :
+        //
+        // if turn > 1:
+        //     turn = 1
+        // elif turn < -1:
+        //     turn = 0
+        //
+        if (turnValue > 1) turnValue = 1;
+        else if (turnValue < -1) turnValue = 0;
+    } else {
+        // Version probablement plus logique :
+        // clamp entre -1 et 1.
+        if (turnValue > 1) turnValue = 1;
+        else if (turnValue < -1) turnValue = -1;
+    }
+
+    return {
+        avancer: avancerValue,
+        turn: turnValue
+    };
+}
+
+// ========================================================
+// Show_AI : traduction de ta fonction Python
+// ========================================================
+function showAI(car) {
+    // Déplacement exact :
+    //
+    // car.y -= (car.CurentSpeed*3)*math.sin((car.direction+90)*math.pi/180)
+    // car.x -= (car.CurentSpeed*3)*math.cos((car.direction+90)*math.pi/180)
+    //
+    car.y -= car.CurentSpeed * 3 * Math.sin((car.direction + 90) * Math.PI / 180);
+    car.x -= car.CurentSpeed * 3 * Math.cos((car.direction + 90) * Math.PI / 180);
+
+    updateSensors(car);
+
+    const inputs = car.data;
+    const control = forwardPass(inputs, car.nerrone);
+
+    avancer(car, control.avancer);
+    tourner(car, control.turn * 20);
+}
+
+// ========================================================
+// Collision checkpoint plus précise
+// ========================================================
+// Ton Pygame utilise pygame.mask.from_surface(), donc du pixel-perfect.
+// En JS, pour rester rapide sur mobile, on utilise une collision
+// rectangle orienté (OBB) entre la voiture et la barre du checkpoint.
+//
+// C'est beaucoup mieux que de simples points.
+//
+function getCorners(cx, cy, w, h, angleRad) {
+    const cos = Math.cos(angleRad);
+    const sin = Math.sin(angleRad);
+
+    const hw = w / 2;
+    const hh = h / 2;
+
+    const localPoints = [
+        [-hw, -hh],
+        [ hw, -hh],
+        [ hw,  hh],
+        [-hw,  hh]
+    ];
+
+    return localPoints.map(([x, y]) => ({
+        x: cx + x * cos - y * sin,
+        y: cy + x * sin + y * cos
+    }));
+}
+
+function getAxes(corners) {
+    const axes = [];
+
+    for (let i = 0; i < corners.length; i++) {
+        const p1 = corners[i];
+        const p2 = corners[(i + 1) % corners.length];
+
+        const edgeX = p2.x - p1.x;
+        const edgeY = p2.y - p1.y;
+
+        const len = Math.hypot(edgeX, edgeY) || 1;
+
+        // Normale de l'arête
+        axes.push({
+            x: -edgeY / len,
+            y:  edgeX / len
+        });
+    }
+
+    return axes;
+}
+
+function projectPolygon(corners, axis) {
+    let min = Infinity;
+    let max = -Infinity;
+
+    for (const p of corners) {
+        const dot = p.x * axis.x + p.y * axis.y;
+        if (dot < min) min = dot;
+        if (dot > max) max = dot;
+    }
+
+    return { min, max };
+}
+
+function polygonsOverlap(a, b) {
+    const axes = [...getAxes(a), ...getAxes(b)];
+
+    for (const axis of axes) {
+        const pa = projectPolygon(a, axis);
+        const pb = projectPolygon(b, axis);
+
+        if (pa.max < pb.min || pb.max < pa.min) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function getCarSize(car) {
+    const img = carImages[car.colorIndex];
+
+    if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
+        return {
+            w: img.naturalWidth,
+            h: img.naturalHeight
+        };
+    }
+
+    // Taille par défaut si image manquante
+    return { w: 30, h: 20 };
+}
+
+function checkCheckpoint(car) {
+    if (CHECKPOINT_ORDER.length === 0) return;
+
+    if (car.checkpoint_nb > CHECKPOINT_ORDER.length) {
+        car.checkpoint_nb = 1;
+    }
+
+    const checkpoint = CHECKPOINT_ORDER[car.checkpoint_nb - 1];
+
+    const carSize = getCarSize(car);
+
+    // Dans ton Python :
+    //
+    // rect_o = checkpoint.get_rect(topleft=(x, y))
+    // rect = checkpoint_return.get_rect(center=rect_o.center)
+    //
+    // Donc le centre du checkpoint tourné est :
+    // center = (x + largeur_checkpoint / 2, y + hauteur_checkpoint / 2)
+    //
+    const cpCenterX = checkpoint[0] + checkpointW / 2;
+    const cpCenterY = checkpoint[1] + checkpointH / 2;
+
+    // Pygame :
+    // checkpoint_return = p.transform.rotate(checkpoint, angle)
+    //
+    // pygame.transform.rotate tourne en sens anti-horaire.
+    // Canvas rotate tourne en sens horaire.
+    // Donc on inverse le signe.
+    //
+    const cpAngleRad = -checkpoint[2] * Math.PI / 180;
+
+    // Voiture :
+    // Pygame fait rotate(image_origin, -direction), donc sens horaire direction.
+    // Canvas rotate(direction) est aussi sens horaire.
+    //
+    const carAngleRad = car.direction * Math.PI / 180;
+
+    const carCorners = getCorners(
+        car.x,
+        car.y,
+        carSize.w,
+        carSize.h,
+        carAngleRad
+    );
+
+    const cpCorners = getCorners(
+        cpCenterX,
+        cpCenterY,
+        checkpointW,
+        checkpointH,
+        cpAngleRad
+    );
+
+    if (polygonsOverlap(carCorners, cpCorners)) {
+        car.nbCheckpointPass += 1;
+        car.timeSinceCheckpoint = 0;
+
+        if (car.checkpoint_nb !== CHECKPOINT_ORDER.length) {
+            car.checkpoint_nb += 1;
+        } else {
+            car.checkpoint_nb = 1;
+        }
+    }
+}
+
+// ========================================================
+// Mise à jour du monde
+// ========================================================
+function updateWorld(dt) {
+    cars.forEach(car => {
+        if (car.stopped) return;
+
+        car.timeSinceCheckpoint += dt;
+
+        showAI(car);
+
+        // Checkpoint avant détection crash, comme dans ton Train_AI.
+        checkCheckpoint(car);
+
+        // Crash si tous les capteurs valent 0.
+        //
+        // Dans ton Python :
+        // if car.data == [0, 0, 0, 0, 0]:
+        //     car.crach = True
+        //
+        if (
+            stopOnCrash &&
+            car.data.length === 5 &&
+            car.data.every(value => value === 0.0)
+        ) {
+            car.crashed = true;
+            car.stopped = true;
+        }
+
+        // Sortie du canvas
+        if (
+            STOP_OUTSIDE &&
+            (
+                car.x < 0 ||
+                car.x > CANVAS_WIDTH ||
+                car.y < 0 ||
+                car.y > CANVAS_HEIGHT
+            )
+        ) {
+            car.crashed = true;
+            car.stopped = true;
+        }
+
+        // Score live
+        car.score = car.nbCheckpointPass * 1000 + car.timeSinceCheckpoint;
+    });
+}
+
+// ========================================================
+// Rendu
+// ========================================================
+function drawBackground() {
+    if (bgCanvas) {
+        ctx.drawImage(bgCanvas, 0, 0);
+    } else {
+        ctx.fillStyle = "#222";
+        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    }
+}
+
+function drawCheckpoints() {
+    if (!showCheckpoints) return;
+
+    CHECKPOINT_ORDER.forEach((checkpoint, index) => {
+        const cx = checkpoint[0] + checkpointW / 2;
+        const cy = checkpoint[1] + checkpointH / 2;
+        const angleRad = -checkpoint[2] * Math.PI / 180;
+
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(angleRad);
+
+        if (
+            checkpointImage &&
+            checkpointImage.complete &&
+            checkpointImage.naturalWidth > 0
+        ) {
+            ctx.drawImage(
+                checkpointImage,
+                -checkpointW / 2,
+                -checkpointH / 2,
+                checkpointW,
+                checkpointH
+            );
+        } else {
+            // Fallback si Checkpoint.png manque
+            ctx.fillStyle = "rgba(255, 215, 0, 0.85)";
+            ctx.fillRect(
+                -checkpointW / 2,
+                -checkpointH / 2,
+                checkpointW,
+                checkpointH
+            );
+        }
+
+        ctx.restore();
+
+        // Petit numéro du checkpoint, non tourné, pour lire facilement
+        ctx.fillStyle = "rgba(255, 255, 255, 0.65)";
+        ctx.font = "10px Arial";
+        ctx.fillText(
+            String(index + 1),
+            cx - 4,
+            cy - checkpointH / 2 - 4
+        );
+    });
+}
+
+function drawCurrentCheckpointTargets() {
+    if (!showCheckpoints) return;
+
+    cars.forEach(car => {
+        if (car.stopped) return;
+        if (car.checkpoint_nb < 1 || car.checkpoint_nb > CHECKPOINT_ORDER.length) return;
+
+        const checkpoint = CHECKPOINT_ORDER[car.checkpoint_nb - 1];
+
+        const cx = checkpoint[0] + checkpointW / 2;
+        const cy = checkpoint[1] + checkpointH / 2;
+        const angleRad = -checkpoint[2] * Math.PI / 180;
+
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(angleRad);
+
+        ctx.strokeStyle = car.isFallback
+            ? "rgba(255, 80, 80, 0.9)"
+            : "rgba(80, 255, 80, 0.9)";
+
+        ctx.lineWidth = 2;
+        ctx.strokeRect(
+            -checkpointW / 2,
+            -checkpointH / 2,
+            checkpointW,
+            checkpointH
+        );
+
+        ctx.restore();
+    });
+}
+
+function drawSensorLines(car) {
+    if (!showSensors) return;
+
+    const t = car.direction * Math.PI / 180;
+    const Lx = -1;
+    const Ly = -8;
+
+    const sensorDefinitions = [
+        [-40, -6],
+        [-20, -2],
+        [0, 0],
+        [20, 2],
+        [40, 6]
+    ];
+
+    sensorDefinitions.forEach(([change, dif], index) => {
+        const originX =
+            car.x +
+            (Lx + dif) * Math.cos(t) -
+            (Ly + 1) * Math.sin(t);
+
+        const originY =
+            car.y +
+            (Lx + dif) * Math.sin(t) +
+            (Ly + 1) * Math.cos(t);
+
+        const stepX = Math.sin((car.direction + change) * Math.PI / 180);
+        const stepY = Math.cos((car.direction + change) * Math.PI / 180);
+
+        const distance = (car.data[index] ?? 1.0) * car.capteurMaxDist;
+
+        const endX = originX + stepX * distance;
+        const endY = originY - stepY * distance;
+
+        ctx.beginPath();
+        ctx.moveTo(originX, originY);
+        ctx.lineTo(endX, endY);
+
+        ctx.strokeStyle = car.data[index] === 0.0
+            ? "red"
+            : "lime";
+
+        ctx.lineWidth = 1;
+        ctx.stroke();
+    });
+}
+
+function drawCar(car) {
+    const img = carImages[car.colorIndex];
+    const size = getCarSize(car);
+
+    ctx.save();
+    ctx.translate(car.x, car.y);
+
+    // Pygame :
+    // self.image = p.transform.rotate(self.image_origin, -self.direction)
+    //
+    // rotate Pygame = anti-horaire.
+    // Donc rotate(-direction) = horaire direction.
+    //
+    // Canvas :
+    // rotate positive = horaire.
+    //
+    ctx.rotate(car.direction * Math.PI / 180);
+
+    if (img && img.complete && img.naturalWidth > 0) {
+        ctx.drawImage(
+            img,
+            -size.w / 2,
+            -size.h / 2,
+            size.w,
+            size.h
+        );
+    } else {
+        // Fallback si CarX.png manque
+        ctx.fillStyle = `hsl(${car.spriteNumber * 36}, 70%, 50%)`;
+        ctx.fillRect(-size.w / 2, -size.h / 2, size.w, size.h);
+    }
+
+    // Contour rouge pour le fallback "crach"
+    if (car.isFallback) {
+        ctx.strokeStyle = "red";
+        ctx.lineWidth = 3;
+        ctx.strokeRect(
+            -size.w / 2 - 3,
+            -size.h / 2 - 3,
+            size.w + 6,
+            size.h + 6
+        );
+    }
+
+    // Contour noir si crashée / stoppée
+    if (car.crashed || car.stopped) {
+        ctx.strokeStyle = "black";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(
+            -size.w / 2 - 5,
+            -size.h / 2 - 5,
+            size.w + 10,
+            size.h + 10
+        );
+    }
+
+    ctx.restore();
+
+    drawSensorLines(car);
+
+    // Numéro du réseau au-dessus de la voiture
+    ctx.fillStyle = "white";
+    ctx.font = "11px Arial";
+    ctx.fillText(
+        `${car.index + 1}${car.isFallback ? "*" : ""}`,
+        car.x - 8,
+        car.y - size.h / 2 - 8
+    );
+}
+
+function draw() {
+    ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+    drawBackground();
+    drawCheckpoints();
+    drawCurrentCheckpointTargets();
+
+    cars.forEach(drawCar);
+}
+
+// ========================================================
+// Réordonnancement des cartes dans le DOM
+// ========================================================
+function reorderCards() {
+    const children = Array.from(simInfo.children);
+
+    const runCards = [];
+    const stopCards = [];
+    const crashCards = [];
+
+    children.forEach(el => {
+        if (el.classList.contains("sim-empty")) return;
+
+        if (el.classList.contains("is-crashed")) {
+            crashCards.push(el);
+        } else if (el.classList.contains("is-stopped")) {
+            stopCards.push(el);
+        } else {
+            runCards.push(el);
+        }
+    });
+
+    // On remet dans l'ordre : run → stop → crash
+    const ordered = [...runCards, ...stopCards, ...crashCards];
+
+    ordered.forEach(el => simInfo.appendChild(el));
+}
+
+// ========================================================
+// Cartes dépliables
+// ========================================================
+function buildInfoCards() {
+    if (!Array.isArray(cars) || cars.length === 0) {
+        simInfo.innerHTML = '<div class="sim-empty">Aucun réseau chargé.</div>';
+        infoRefs = [];
+        return;
+    }
+
+    simInfo.innerHTML = cars.map((car, i) => {
+        const fallbackClass = car.isFallback ? " fallback" : "";
+        const fallbackMark = car.isFallback ? " *" : "";
+
+        return `
+            <details class="car-card${fallbackClass}" data-car="${i}">
+                <summary class="car-summary">
+                    <span class="car-title">R${i + 1}${fallbackMark}</span>
+                    <span class="car-status js-status run">RUN</span>
+                </summary>
+
+                <div class="car-body">
+                    <div class="car-grid">
+                        <div class="car-item">
+                            <div class="car-label">Pos</div>
+                            <div class="car-value js-pos">—</div>
+                        </div>
+
+                        <div class="car-item">
+                            <div class="car-label">Dir</div>
+                            <div class="car-value js-dir">—</div>
+                        </div>
+
+                        <div class="car-item">
+                            <div class="car-label">Score</div>
+                            <div class="car-value js-score">—</div>
+                        </div>
+
+                        <div class="car-item">
+                            <div class="car-label">CP</div>
+                            <div class="car-value js-cp">—</div>
+                        </div>
+
+                        <div class="car-item">
+                            <div class="car-label">Next</div>
+                            <div class="car-value js-next-cp">—</div>
+                        </div>
+                    </div>
+
+                    <div class="car-speed">
+                        <div class="car-label">Vitesse</div>
+                        <div class="speed-row">
+                            <div class="speed-gauge">
+                                <div class="speed-fill js-speed-fill"></div>
+                            </div>
+                            <div class="speed-num js-speed">—</div>
+                        </div>
+                    </div>
+
+                    <div class="car-sensors">
+                        <div class="sensor">
+                            <div class="sensor-label">S1</div>
+                            <div class="sensor-value js-sensor-value">—</div>
+                        </div>
+
+                        <div class="sensor">
+                            <div class="sensor-label">S2</div>
+                            <div class="sensor-value js-sensor-value">—</div>
+                        </div>
+
+                        <div class="sensor">
+                            <div class="sensor-label">S3</div>
+                            <div class="sensor-value js-sensor-value">—</div>
+                        </div>
+
+                        <div class="sensor">
+                            <div class="sensor-label">S4</div>
+                            <div class="sensor-value js-sensor-value">—</div>
+                        </div>
+
+                        <div class="sensor">
+                            <div class="sensor-label">S5</div>
+                            <div class="sensor-value js-sensor-value">—</div>
+                        </div>
+                    </div>
+
+                    <div class="car-meta js-meta"></div>
+                </div>
+            </details>
+        `;
+    }).join("");
+
+    infoRefs = cars.map((car, i) => {
+        const root = simInfo.querySelector(`[data-car="${i}"]`);
+
+        if (!root) {
+            return null;
+        }
+
+        const metaParts = [];
+
+        metaParts.push(`Car${car.spriteNumber}.png`);
+
+        if (car.savedGen != null) {
+            metaParts.push(`Gén ${car.savedGen}`);
+        }
+
+        if (car.savedFile != null) {
+            metaParts.push(`Fichier ${car.savedFile}`);
+        }
+
+        if (car.requestedPlace != null) {
+            metaParts.push(`Place ${car.requestedPlace}`);
+        }
+
+        if (car.usedIndex != null) {
+            metaParts.push(`Index ${car.usedIndex}`);
+        }
+
+        const refs = {
+            root,
+            status: root.querySelector(".js-status"),
+            pos: root.querySelector(".js-pos"),
+            dir: root.querySelector(".js-dir"),
+            score: root.querySelector(".js-score"),
+            cp: root.querySelector(".js-cp"),
+            nextCp: root.querySelector(".js-next-cp"),
+            speed: root.querySelector(".js-speed"),
+            speedFill: root.querySelector(".js-speed-fill"),
+            sensors: Array.from(root.querySelectorAll(".js-sensor-value")),
+            meta: root.querySelector(".js-meta")
+        };
+
+        if (refs.meta) {
+            refs.meta.textContent = metaParts.join(" · ");
+        }
+
+        // Mémoriser le statut initial pour détecter les changements
+        car._prevStatus = "run";
+
+        return refs;
+    }).filter(Boolean);
+}
+
+function updateInfo() {
+    if (!Array.isArray(cars) || cars.length === 0) {
+        if (!simInfo.querySelector(".sim-empty")) {
+            simInfo.innerHTML = '<div class="sim-empty">Aucun réseau chargé.</div>';
+        }
+
+        infoRefs = [];
+        return;
+    }
+
+    if (infoRefs.length !== cars.length) {
+        buildInfoCards();
+    }
+
+    let statusChanged = false;
+
+    cars.forEach((car, i) => {
+        const ref = infoRefs[i];
+        if (!ref) return;
+
+        let statusLabel = "RUN";
+        let statusClass = "run";
+        let newStatus = "run";
+
+        if (car.crashed) {
+            statusLabel = "CRASH";
+            statusClass = "crash";
+            newStatus = "crash";
+        } else if (car.stopped) {
+            statusLabel = "STOP";
+            statusClass = "stop";
+            newStatus = "stop";
+        }
+
+        // Détecter un changement de statut
+        if (newStatus !== car._prevStatus) {
+            car._prevStatus = newStatus;
+            statusChanged = true;
+        }
+
+        // Appliquer les classes sur la carte
+        ref.root.classList.toggle("is-crashed", car.crashed);
+        ref.root.classList.toggle("is-stopped", car.stopped && !car.crashed);
+
+        ref.status.textContent = statusLabel;
+        ref.status.className = `car-status js-status ${statusClass}`;
+
+        ref.pos.textContent = `${formatValue(car.x, 1)}, ${formatValue(car.y, 1)}`;
+        ref.dir.textContent = `${formatValue(car.direction, 1)}°`;
+        ref.score.textContent = formatValue(car.score);
+        ref.cp.textContent = `${car.nbCheckpointPass}/${CHECKPOINT_ORDER.length}`;
+        ref.nextCp.textContent = String(car.checkpoint_nb);
+
+        const speed = Number(car.CurentSpeed || 0);
+        const speedPercent = Math.max(0, Math.min(100, (speed / SPEED_MAX) * 100));
+
+        if (ref.speedFill) {
+            ref.speedFill.style.width = `${speedPercent.toFixed(1)}%`;
+        }
+
+        if (ref.speed) {
+            ref.speed.textContent = formatValue(speed);
+        }
+
+        for (let s = 0; s < ref.sensors.length; s++) {
+            ref.sensors[s].textContent = formatValue(car.data[s]);
+        }
+    });
+
+    // Réordonner uniquement si un statut a changé
+    if (statusChanged) {
+        reorderCards();
+    }
+}
+
+// ========================================================
+// Boucle d'animation
+// ========================================================
+function frame(now) {
+    const elapsed = now - lastTime;
+    lastTime = now;
+
+    if (!paused) {
+        accumulator += elapsed * speedMultiplier;
+
+        let steps = 0;
+        const maxSteps = 10;
+
+        while (accumulator >= STEP_MS && steps < maxSteps) {
+            updateWorld(STEP_MS / 1000);
+            accumulator -= STEP_MS;
+            steps++;
+        }
+
+        // Évite que la simulation explose si le navigateur prend du retard.
+        if (steps >= maxSteps) {
+            accumulator = 0;
+        }
+    }
+
+    draw();
+
+    frameCount++;
+    if (frameCount % 15 === 0) {
+        updateInfo();
+    }
+
+    requestAnimationFrame(frame);
+}
+
+// ========================================================
+// Contrôles
+// ========================================================
+btnPause.addEventListener("click", () => {
+    paused = !paused;
+    btnPause.textContent = paused ? "Reprendre" : "Pause";
+});
+
+btnReset.addEventListener("click", () => {
+    const networks = normalizeNetworks(RAW_DATA);
+    cars = createCars(networks);
+
+    accumulator = 0;
+    lastTime = performance.now();
+    paused = false;
+    btnPause.textContent = "Pause";
+
+    buildInfoCards();
+    updateInfo();
+});
+
+chkSensors.addEventListener("change", () => {
+    showSensors = chkSensors.checked;
+});
+
+chkCheckpoints.addEventListener("change", () => {
+    showCheckpoints = chkCheckpoints.checked;
+});
+
+chkStopCrash.addEventListener("change", () => {
+    stopOnCrash = chkStopCrash.checked;
+});
+
+speedRange.addEventListener("input", () => {
+    speedMultiplier = parseFloat(speedRange.value);
+    speedValue.textContent = `${speedMultiplier}x`;
+});
+
+// ========================================================
+// Initialisation
+// ========================================================
+async function init() {
+    try {
+        const bgSrc = getBackgroundSrcForMap(MAP_STR);
+        const checkpointSrc = `${IMG_BASE}/Checkpoint.png`;
+
+        const carImagePromises = [];
+        for (let i = 1; i <= 10; i++) {
+            carImagePromises.push(
+                loadImage(`${IMG_BASE}/Car${i}.png`).catch(() => null)
+            );
+        }
+
+        const loaded = await Promise.all([
+            loadImage(bgSrc).catch(() => null),
+            loadImage(checkpointSrc).catch(() => null),
+            ...carImagePromises
+        ]);
+
+        bgImage = loaded[0];
+        checkpointImage = loaded[1];
+        carImages = loaded.slice(2);
+
+        if (
+            checkpointImage &&
+            checkpointImage.naturalWidth > 0 &&
+            checkpointImage.naturalHeight > 0
+        ) {
+            checkpointW = checkpointImage.naturalWidth;
+            checkpointH = checkpointImage.naturalHeight;
+        } else {
+            checkpointW = 32;
+            checkpointH = 32;
+        }
+
+        prepareWallMask();
+
+        const networks = normalizeNetworks(RAW_DATA);
+        cars = createCars(networks);
+
+        buildInfoCards();
+        updateInfo();
+
+        requestAnimationFrame(frame);
+
+    } catch (error) {
+        console.error(error);
+        simInfo.innerHTML = `
+            <div class="sim-empty">
+                Erreur de chargement des images.<br>
+                Vérifie que tes fichiers sont bien dans :
+                <code>pythonApp/img/</code><br><br>
+                ${error}
+            </div>
+        `;
+    }
+}
+
+init();
+</script>
+
+<style>
+    /* ==========================================================
+   Contrôles
+========================================================== */
+.sim-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin: 0 0 14px;
+    font-family: "Inter", ui-sans-serif, system-ui, -apple-system,
+        BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+    color: #0f172a;
+}
+
+.sim-controls label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #334155;
+    user-select: none;
+}
+
+.sim-controls input[type="checkbox"] {
+    accent-color: #2563eb;
+}
+
+.sim-controls input[type="range"] {
+    accent-color: #2563eb;
+}
+
+.sim-controls .btn {
+    appearance: none;
+    border: 1px solid #cbd5e1;
+    background: #ffffff;
+    color: #0f172a;
+    border-radius: 999px;
+    padding: 7px 14px;
+    font-size: 12px;
+    font-weight: 650;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease,
+        transform 0.12s ease;
+}
+
+.sim-controls .btn:hover {
+    background: #f8fafc;
+    border-color: #94a3b8;
+}
+
+.sim-controls .btn:active {
+    transform: scale(0.98);
+}
+
+/* ==========================================================
+   Canvas
+========================================================== */
+#simCanvas {
+    display: block;
+    margin: 0 auto;
+    max-width: 100%;
+    height: auto;
+    border: 1px solid #cbd5e1;
+    border-radius: 10px;
+    background: #000000;
+    box-shadow: 0 10px 30px -18px rgba(15, 23, 42, 0.35);
+}
+
+/* ==========================================================
+   Conteneur des cartes
+========================================================== */
+.sim-cards {
+    --surface: #ffffff;
+    --surface-muted: #f8fafc;
+    --surface-soft: #f1f5f9;
+    --border: #e2e8f0;
+    --border-strong: #cbd5e1;
+    --text: #0f172a;
+    --text-muted: #64748b;
+
+    --success-text: #166534;
+    --success-bg: #ecfdf5;
+    --success-border: #bbf7d0;
+
+    --stop-text: #334155;
+    --stop-bg: #f1f5f9;
+    --stop-border: #cbd5e1;
+
+    --danger-text: #991b1b;
+    --danger-bg: #fef2f2;
+    --danger-border: #fecaca;
+
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+
+    margin: 14px 0 24px;
+
+    /* Les cartes descendent dans la page, pas de scroll interne */
+    overflow: visible !important;
+    max-height: none !important;
+
+    font-family: "Inter", ui-sans-serif, system-ui, -apple-system,
+        BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--text);
+}
+
+.sim-empty {
+    grid-column: 1 / -1;
+    padding: 12px 14px;
+    border: 1px dashed var(--border-strong);
+    border-radius: 10px;
+    background: var(--surface-muted);
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+/* ==========================================================
+   Carte dépliable
+========================================================== */
+.car-card {
+    display: block !important;
+    box-sizing: border-box;
+    position: relative;
+
+    min-width: 0;
+
+    background: var(--surface) !important;
+    color: var(--text) !important;
+
+    border: 1px solid var(--border);
+    border-radius: 12px;
+
+    overflow: hidden;
+
+    box-shadow:
+        0 1px 2px rgba(15, 23, 42, 0.04),
+        0 10px 28px -18px rgba(15, 23, 42, 0.18);
+
+    /* Ordre normal : cartes actives en haut */
+    order: 1;
+
+    transition:
+        transform 0.15s ease,
+        box-shadow 0.15s ease,
+        border-color 0.15s ease;
+}
+
+/* Stoppées : un peu plus bas */
+.car-card.is-stopped {
+    order: 500;
+}
+
+/* Crashées : tout en bas */
+.car-card.is-crashed {
+    order: 900;
+    border-color: rgba(220, 38, 38, 0.35);
+}
+
+/* Réseau de secours / crach */
+.car-card.fallback {
+    border-color: rgba(220, 38, 38, 0.35);
+}
+
+.car-card:hover {
+    transform: translateY(-1px);
+    border-color: var(--border-strong);
+    box-shadow:
+        0 1px 2px rgba(15, 23, 42, 0.05),
+        0 14px 34px -18px rgba(15, 23, 42, 0.24);
+}
+
+/* ==========================================================
+   Bouton repliable = summary
+========================================================== */
+.car-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 10px;
+
+    min-height: 42px;
+    padding: 10px 12px;
+
+    background: whitesmoke;
+    color: var(--text);
+
+    cursor: pointer;
+    user-select: none;
+
+    list-style: none;
+}
+
+/* Supprime la flèche native */
+.car-summary::-webkit-details-marker {
+    display: none;
+}
+
+.car-summary::marker {
+    content: "";
+}
+
+.car-summary:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: -2px;
+}
+
+.car-title {
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 750;
+    letter-spacing: -0.01em;
+    color: var(--text);
+
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.car-status {
+    flex-shrink: 0;
+
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    min-height: 20px;
+    padding: 2px 8px;
+
+    border: 1px solid transparent;
+    border-radius: 999px;
+
+    font-size: 10px;
+    font-weight: 750;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+
+    white-space: nowrap;
+}
+
+.car-status.run {
+    color: var(--success-text);
+    background: var(--success-bg);
+    border-color: var(--success-border);
+}
+
+.car-status.stop {
+    color: var(--stop-text);
+    background: var(--stop-bg);
+    border-color: var(--stop-border);
+}
+
+.car-status.crash {
+    color: var(--danger-text);
+    background: var(--danger-bg);
+    border-color: var(--danger-border);
+}
+
+/* Quand la carte est ouverte, on sépare visuellement le bouton du contenu */
+.car-card[open] .car-summary {
+    border-bottom: 1px solid var(--border);
+}
+
+/* ==========================================================
+   Contenu dépliable
+========================================================== */
+.car-body {
+    padding: 10px 12px 12px;
+    background: whitesmoke;
+    color: var(--text);
+}
+
+/* ==========================================================
+   Grille infos
+========================================================== */
+.car-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px 8px;
+
+    margin-bottom: 10px;
+}
+
+.car-item {
+    min-width: 0;
+}
+
+.car-label {
+    margin-bottom: 2px;
+
+    color: var(--text-muted);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    line-height: 1.1;
+}
+
+.car-value {
+    min-width: 0;
+
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 680;
+    font-variant-numeric: tabular-nums;
+
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ==========================================================
+   Jauge de vitesse
+========================================================== */
+.car-speed {
+    margin: 10px 0;
+    padding: 8px 9px;
+
+    background: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+}
+
+.speed-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    margin-top: 4px;
+}
+
+.speed-gauge {
+    flex: 1;
+    min-width: 0;
+
+    height: 7px;
+    overflow: hidden;
+
+    background: #e2e8f0;
+    border-radius: 999px;
+
+    box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.speed-fill {
+    width: 0%;
+    height: 100%;
+
+    background: linear-gradient(90deg, #0f172a, #475569);
+    border-radius: 999px;
+
+    transition: width 0.08s linear;
+}
+
+.speed-num {
+    flex-shrink: 0;
+    min-width: 38px;
+
+    text-align: right;
+
+    color: var(--text);
+    font-size: 11px;
+    font-weight: 750;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================
+   Capteurs
+========================================================== */
+.car-sensors {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
+
+    margin: 10px 0;
+}
+
+.sensor {
+    box-sizing: border-box;
+
+    min-width: 0;
+    padding: 3px 2px;
+
+    text-align: center;
+
+    background: var(--surface-muted);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+}
+
+.sensor-label {
+    color: var(--text-muted);
+    font-size: 8px;
+    font-weight: 750;
+    line-height: 1;
+    letter-spacing: 0.02em;
+}
+
+.sensor-value {
+    margin-top: 1px;
+
+    color: var(--text);
+    font-size: 9px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ==========================================================
+   Métadonnées
+========================================================== */
+.car-meta {
+    margin-top: 8px;
+    padding-top: 7px;
+
+    border-top: 1px dashed var(--border);
+
+    color: var(--text-muted);
+    font-size: 9px;
+    font-weight: 550;
+
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ==========================================================
+   Mobile
+========================================================== */
+@media (max-width: 640px) {
+    .sim-cards {
+        grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+        gap: 8px;
+    }
+
+    .car-summary {
+        min-height: 40px;
+        padding: 9px 10px;
+    }
+
+    .car-title {
+        font-size: 12px;
+    }
+
+    .car-body {
+        padding: 9px 10px 10px;
+    }
+
+    .car-value {
+        font-size: 11px;
+    }
+
+    .speed-num {
+        min-width: 34px;
+        font-size: 10px;
+    }
+
+    .sensor-value {
+        font-size: 8px;
+    }
+}
+
+@media (max-width: 420px) {
+    .sim-cards {
+        grid-template-columns: 1fr;
+    }
+
+    .car-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+/* ==========================================================
+   Accessibilité / confort
+========================================================== */
+@media (prefers-reduced-motion: reduce) {
+    .car-card,
+    .speed-fill,
+    .sim-controls .btn {
+        transition: none !important;
+    }
+
+    .car-card:hover {
+        transform: none;
+    }
+}
+</style>
+
+{% endblock %}
