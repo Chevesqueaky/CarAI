@@ -1,2 +1,2 @@
 flask==2.0.1
-pygbag-0.9.3
+pygbag==0.9.3
