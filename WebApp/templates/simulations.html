@@ -1,4 +1,4 @@
-<!--{ extends "base.html" %}
+﻿<!--{ extends "base.html" %}
 { block content %}
     <h1>Simulation</h1>
     <div class="content">
@@ -36,7 +36,7 @@
     </label>
 
     <label>
-        <input type="checkbox" id="chkCheckpoints" checked>
+        <input type="checkbox" id="chkCheckpoints">
         Voir checkpoints
     </label>
 
@@ -233,7 +233,7 @@ let cars = [];
 
 let paused = false;
 let showSensors = false;
-let showCheckpoints = true;
+let showCheckpoints = false;
 let stopOnCrash = true;
 let speedMultiplier = 1;
 
