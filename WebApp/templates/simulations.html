@@ -1093,10 +1093,61 @@ function reorderCards() {
         }
     });
 
-    // On remet dans l'ordre : run → stop → crash
-    const ordered = [...runCards, ...stopCards, ...crashCards];
+    // Trier chaque groupe par score décroissant
+    const sortedRun = sortByScore(runCards);
+    const sortedStop = sortByScore(stopCards);
+    const sortedCrash = sortByScore(crashCards);
+
+    // On remet dans l'ordre : run → stop → crash (chaque groupe trié)
+    const ordered = [...sortedRun, ...sortedStop, ...sortedCrash];
 
     ordered.forEach(el => simInfo.appendChild(el));
+
+    // Mettre à jour les numéros de rang après réordonnancement
+    updateRanking();
+}
+
+// ========================================================
+// Tri par score décroissant
+// ========================================================
+function sortByScore(cards) {
+    return [...cards].sort((a, b) => {
+        const scoreA = parseFloat(a.querySelector(".js-score").textContent.replace(/[^0-9.,-]/g, "") || "0");
+        const scoreB = parseFloat(b.querySelector(".js-score").textContent.replace(/[^0-9.,-]/g, "") || "0");
+        return scoreB - scoreA;
+    });
+}
+
+// ========================================================
+// Mise à jour des numéros de rang (1er, 2ème, 3ème...)
+//
+// ========================================================
+function updateRanking() {
+    const cards = Array.from(simInfo.querySelectorAll("details.car-card"));
+
+    if (cards.length === 0) return;
+
+    // Récupérer le score de chaque carte
+    const ranked = cards.map((card, i) => {
+        const scoreEl = card.querySelector(".js-score");
+        const score = parseFloat(scoreEl.textContent.replace(/[^0-9.,-]/g, "") || "0");
+        return { card, score, origIndex: i };
+    });
+
+    // Trier par score décroissant
+    ranked.sort((a, b) => b.score - a.score);
+
+    // Réordonner les cartes dans le DOM par score
+    ranked.forEach((item) => simInfo.appendChild(item.card));
+
+    // Mettre à jour les rangs
+    ranked.forEach((item, index) => {
+        const rank = index + 1;
+        const title = item.card.querySelector(".car-title");
+        if (title) {
+            title.textContent = `${rank}er`;
+        }
+    });
 }
 
 // ========================================================
@@ -1116,20 +1167,15 @@ function buildInfoCards() {
         return `
             <details class="car-card${fallbackClass}" data-car="${i}">
                 <summary class="car-summary">
-                    <span class="car-title">R${i + 1}${fallbackMark}</span>
+                    <span class="car-title">${i + 1}er${fallbackMark}</span>
                     <span class="car-status js-status run">RUN</span>
                 </summary>
 
                 <div class="car-body">
                     <div class="car-grid">
                         <div class="car-item">
-                            <div class="car-label">Pos</div>
-                            <div class="car-value js-pos">—</div>
-                        </div>
-
-                        <div class="car-item">
-                            <div class="car-label">Dir</div>
-                            <div class="car-value js-dir">—</div>
+                            <div class="car-label">Score</div>
+                            <div class="car-value js-score">—</div>
                         </div>
 
                         <div class="car-item">
@@ -1200,7 +1246,7 @@ function buildInfoCards() {
 
         const metaParts = [];
 
-        metaParts.push(`Car${car.spriteNumber}.png`);
+        metaParts.push(`Car ${car.spriteNumber-1}`);
 
         if (car.savedGen != null) {
             metaParts.push(`Gén ${car.savedGen}`);
@@ -1221,8 +1267,6 @@ function buildInfoCards() {
         const refs = {
             root,
             status: root.querySelector(".js-status"),
-            pos: root.querySelector(".js-pos"),
-            dir: root.querySelector(".js-dir"),
             score: root.querySelector(".js-score"),
             cp: root.querySelector(".js-cp"),
             nextCp: root.querySelector(".js-next-cp"),
@@ -1290,8 +1334,6 @@ function updateInfo() {
         ref.status.textContent = statusLabel;
         ref.status.className = `car-status js-status ${statusClass}`;
 
-        ref.pos.textContent = `${formatValue(car.x, 1)}, ${formatValue(car.y, 1)}`;
-        ref.dir.textContent = `${formatValue(car.direction, 1)}°`;
         ref.score.textContent = formatValue(car.score);
         ref.cp.textContent = `${car.nbCheckpointPass}/${CHECKPOINT_ORDER.length}`;
         ref.nextCp.textContent = String(car.checkpoint_nb);
@@ -1878,7 +1920,7 @@ init();
     border-top: 1px dashed var(--border);
 
     color: var(--text-muted);
-    font-size: 9px;
+    font-size: 15px;
     font-weight: 550;
 
     white-space: nowrap;
